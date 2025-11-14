@@ -18,6 +18,51 @@ intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 tree = discord.app_commands.CommandTree(bot)
 
+async def send_response(interaction: discord.Interaction, response_text: str):
+
+    """
+    Checks message length and sends it, splitting if necessary.
+    """
+    char_limit = 1950  # Safe limit under Discord's 2000
+
+
+    if len(response_text) <= char_limit:
+        # If deferred, use followup.send. Otherwise, use response.send_message
+        if interaction.response.is_done():
+            await interaction.followup.send(response_text)
+        else:
+            await interaction.response.send_message(response_text)
+    else:
+        # Answer is too long, we must split it!
+        chunks = [response_text[i:i + char_limit] for i in range(0, len(response_text), char_limit)]
+        # Send the first chunk as the initial reply
+        if interaction.response.is_done():
+            await interaction.followup.send(chunks[0])
+        else:
+            await interaction.response.send_message(chunks[0])
+
+        # Send the rest of the chunks as separate messages
+        for chunk in chunks[1:]:
+            await interaction.channel.send(chunk)
+
+# --- GLOBAL FUNCTION: HANDLE ERRORS ---
+# We also use this for every command.
+async def handle_error(interaction: discord.Interaction, error: Exception):
+    """
+    Handles common errors in a consistent way.
+    """
+
+    print(f"An error occurred: {error}")
+    if "429" in str(error):
+         error_message = "Ask me after a minute. That's my cooldown time"
+    else:
+        error_message = "I am sorry. My oath has been taken away 😔"
+
+    if interaction.response.is_done():
+        await interaction.followup.send(error_message)
+    else:
+        await interaction.response.send_message(error_message, ephemeral=True)
+
 # --- EVENTS ---
 @bot.event
 async def on_ready():
@@ -63,6 +108,23 @@ async def about(interaction: discord.Interaction):
         value="Pit two characters against each other! I will narrate a vivid, lore-based battle between them.",
         inline=True
     )
+    embed.add_field(
+        name="`/bio [character]`",
+        value="Get a full biography of any Marvel character, from their origins to their key storylines.",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="`/whatif [scenario]`",
+        value="Propose an alternate-reality scenario and I'll write a short narrative about what might happen.",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="`/teamup [char1] [char2]`",
+        value="Curious how two characters would work together? I'll write a short scene about their first mission!",
+        inline=False
+    )	
     embed.set_footer(text="More commands coming soon!")
     
     # Send the embed message. 
@@ -109,17 +171,11 @@ async def ask(interaction: discord.Interaction, question: str):
             await interaction.followup.send("I'm sorry, I couldn't come up with an answer for that. Please try rephrasing your question.")
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        if "429" in str(e):
-             await interaction.followup.send("Ask me after a minute. I can look into only two places in a minute")
-        else:
-            await interaction.followup.send("I am sorry. My oath has been taken away 😔")
+        await handle_error(interaction, e)
 
 @tree.command(name="fight", description="Pit two Marvel characters against each other!")
 async def fight(interaction: discord.Interaction, character1: str, character2: str):
-    """
-    Handles the /fight slash command.
-    """
+    
     try:
         await interaction.response.defer(thinking=True)
 
@@ -146,27 +202,90 @@ async def fight(interaction: discord.Interaction, character1: str, character2: s
         
         # --- This is the same message-splitting logic from /ask ---
         if response.text:
-            response_text = response.text
-            char_limit = 1950 
-
-            if len(response_text) <= char_limit:
-                await interaction.followup.send(response_text)
-            else:
-                chunks = [response_text[i:i + char_limit] for i in range(0, len(response_text), char_limit)]
-                await interaction.followup.send(chunks[0])
-                for chunk in chunks[1:]:
-                    await interaction.channel.send(chunk)
+            await send _response(interaction, response.text)
                     
         else:
             await interaction.followup.send(f"I'm sorry, I couldn't seem to simulate a battle between {character1} and {character2}. Perhaps they are too evenly matched?")
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        # We can even have a custom rate-limit message for this command
-        if "429" in str(e):
-             await interaction.followup.send("Ask me after a minute. You're pitting characters against each other too fast!")
+        await handle_error(interaction,e)
+
+@tree.command(name="bio", description="Get a detailed biography of a Marvel character.")
+async def bio(interaction: discord.Interaction, character: str):
+    try:
+        await interaction.response.defer(thinking=True)
+
+        prompt = f"""
+        You are the Watcher. A user wants a full biography of {character}.
+        **Persona:** Expert, passionate, and encyclopedic.
+        **Rules:**
+        1. Provide a detailed biography of {character}.
+        2. Include their Origin Story, a summary of their Powers/Abilities, and a brief mention of 1-2 of their most important story arcs.
+        3. Base this ONLY on `marvel.com` and `marvel.fandom.com`.
+        4. Give ONLY the biography.
+        Begin!
+        """
+        
+        response = model.generate_content(prompt)
+        if response.text:
+            await send_response(interaction, response.text)
         else:
-            await interaction.followup.send("I am sorry. My oath has been taken away 😔")
+            await interaction.followup.send(f"I'm sorry, I couldn't find a detailed biography for {character}.")
+
+    except Exception as e:
+        await handle_error(interaction, e)
+
+
+@tree.command(name="whatif", description="Propose an alternate-reality 'What If' scenario.")
+async def whatif(interaction: discord.Interaction, scenario: str):
+    try:
+        await interaction.response.defer(thinking=True)
+
+        prompt = f"""
+        You are the Watcher. A user is proposing a "What If" scenario.
+        **Scenario:** "{scenario}"
+        **Persona:** Creative, dramatic, and visionary.
+        **Rules:**
+        1. Write a short, vivid narrative exploring the logical consequences of this change in the timeline.
+        2. Base your narrative on the lore and character traits from `marvel.com` and `marvel.fandom.com`.
+        3. Give ONLY the narrative.
+        Begin!
+        """
+        
+        response = model.generate_content(prompt)
+        if response.text:
+            await send_response(interaction, response.text)
+        else:
+            await interaction.followup.send("I'm sorry, I couldn't seem to find a scenario for that.")
+
+    except Exception as e:
+        await handle_error(interaction, e)
+
+
+@tree.command(name="teamup", description="See how two Marvel characters would work together.")
+async def teamup(interaction: discord.Interaction, character1: str, character2: str):
+    try:
+        await interaction.response.defer(thinking=True)
+
+        prompt = f"""
+        You are the Watcher. A user wants to see a team-up between {character1} and {character2}.
+        **Persona:** Creative, witty, and dramatic.
+        **Rules:**
+        1. Write a short, creative scene about their first mission or interaction.
+        2. Explore how their personalities and powers would complement each other OR how they would clash.
+        3. Base this on their known character traits from `marvel.com` and `marvel.fandom.com`.
+        4. Give ONLY the scene.
+        Begin!
+        """
+        
+        response = model.generate_content(prompt)
+        if response.text:
+            await send_response(interaction, response.text)
+        else:
+            await interaction.followup.send(f"I'm sorry, I couldn't seem to find a team-up for {character1} and {character2}.")
+
+    except Exception as e:
+        await handle_error(interaction, e)
 
 # --- RUN THE BOT ---
 bot.run(DISCORD_TOKEN)
