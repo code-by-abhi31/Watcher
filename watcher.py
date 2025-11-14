@@ -202,7 +202,7 @@ async def fight(interaction: discord.Interaction, character1: str, character2: s
         
         # --- This is the same message-splitting logic from /ask ---
         if response.text:
-            await send _response(interaction, response.text)
+            await send_response(interaction, response.text)
                     
         else:
             await interaction.followup.send(f"I'm sorry, I couldn't seem to simulate a battle between {character1} and {character2}. Perhaps they are too evenly matched?")
